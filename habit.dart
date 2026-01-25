@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:ui';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:math' as math;
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 void main() => runApp(const MaterialApp(home: HabitPage(), debugShowCheckedModeBanner: false));
 
@@ -14,27 +15,46 @@ class HabitPage extends StatefulWidget {
 
 class _HabitPageState extends State<HabitPage> {
   final TextEditingController _habitController = TextEditingController();
-  int hp = 100;
-  int xp = 0;
-  int level = 1;
+  final ScrollController _dateScrollController = ScrollController();
+  final AudioPlayer _audioPlayer = AudioPlayer();
+
+  int hp = 100, xp = 0, level = 1;
   int? selectedTaskIndex;
   int currentDay = DateTime.now().day;
-  List<Map<String, dynamic>> habits = [];
+  late int daysInMonth;
 
+  List<Map<String, dynamic>> habits = [];
   bool showAnim = false;
   bool isGain = true;
   String animMsg = "";
 
   final Color gold = const Color(0xFFFFD700);
   final Color cyan = Colors.cyanAccent;
-  final Color hotPink = const Color(0xFFFF2D55);
-
-  final List<String> taskEmojis = ["⚡", "⚔️", "🦾", "🐉", "☄️", "🔥", "🎯", "🧬"];
+  final Color neonGreen = const Color(0xFF39FF14);
+  final Color brightOrange = const Color(0xFFFFAC1C);
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    daysInMonth = DateUtils.getDaysInMonth(DateTime.now().year, DateTime.now().month);
+    _loadData().then((_) => _scrollToToday());
+  }
+
+  void _scrollToToday() {
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (_dateScrollController.hasClients) {
+        double cellWidth = 65.0;
+        double screenWidth = MediaQuery.of(context).size.width;
+        double offset = (currentDay - 1) * cellWidth;
+        double finalOffset = (offset - (screenWidth / 2) + 150).clamp(0.0, _dateScrollController.position.maxScrollExtent);
+
+        _dateScrollController.animateTo(
+            finalOffset,
+            duration: const Duration(seconds: 1),
+            curve: Curves.easeOutQuart
+        );
+      }
+    });
   }
 
   _loadData() async {
@@ -44,7 +64,14 @@ class _HabitPageState extends State<HabitPage> {
       xp = prefs.getInt('xp') ?? 0;
       level = (xp / 500).floor() + 1;
       String? saved = prefs.getString('my_habits');
-      if (saved != null) habits = List<Map<String, dynamic>>.from(json.decode(saved));
+      if (saved != null) {
+        habits = List<Map<String, dynamic>>.from(json.decode(saved));
+        for (var h in habits) {
+          if (h["data"].length != daysInMonth) {
+            h["data"] = List.generate(daysInMonth, (i) => "EMPTY");
+          }
+        }
+      }
     });
   }
 
@@ -55,28 +82,28 @@ class _HabitPageState extends State<HabitPage> {
     prefs.setInt('xp', xp);
   }
 
-  void _runAnimation(bool gain, String msg) {
-    setState(() { isGain = gain; animMsg = msg; showAnim = true; });
-    Timer(const Duration(milliseconds: 2000), () => setState(() => showAnim = false));
+  void _playSound(String fileName) async {
+    try { await _audioPlayer.stop(); await _audioPlayer.play(AssetSource(fileName)); } catch (e) {}
   }
 
   void _handleEntry(int hIdx, int dIdx) {
     int dayClicked = dIdx + 1;
     if (dayClicked > currentDay) return;
+
     setState(() {
-      String status = habits[hIdx]["data"][dIdx];
-      if (status == "OK") {
+      if (habits[hIdx]["data"][dIdx] == "OK") {
         habits[hIdx]["data"][dIdx] = "EMPTY";
         xp = (xp - 50).clamp(0, 999999);
       } else {
         habits[hIdx]["data"][dIdx] = "OK";
         if (dayClicked < currentDay) {
           hp = (hp - 5).clamp(0, 100);
-          xp = (xp - 20).clamp(0, 999999);
-          _runAnimation(false, "VITALITY LOW: -5 HP ⚠️");
+          _playSound('danger.mp3');
+          _runAnimation(false, "VITALITY DECREASED: -5 HP ⚠️");
         } else {
           xp += 50;
-          _runAnimation(true, "DOMINANCE: +50 XP 💎");
+          _playSound('victory.mp3');
+          _runAnimation(true, "MISSION UPDATE: +50 XP 💎");
         }
       }
       level = (xp / 500).floor() + 1;
@@ -84,132 +111,100 @@ class _HabitPageState extends State<HabitPage> {
     _saveData();
   }
 
+  void _runAnimation(bool gain, String msg) {
+    setState(() { isGain = gain; animMsg = msg; showAnim = true; });
+    Timer(const Duration(milliseconds: 2000), () => setState(() => showAnim = false));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF010203),
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
-          Column(
-            children: [
-              const SizedBox(height: 60),
-              _buildCaptionRow(), // Task 2: Captain's Log Upgraded
-              const SizedBox(height: 25),
-              _buildStats(),
-              const SizedBox(height: 20),
-              Expanded(child: selectedTaskIndex == null ? _buildMainDashboard() : _buildIndividualDashboard()),
-            ],
+          Positioned.fill(child: Image.asset("assets/setting.jpeg", fit: BoxFit.cover)),
+          SafeArea(
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                Text("✨⚔️QUESTBOARD⚔️✨",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 4, shadows: [Shadow(color: cyan, blurRadius: 20)])),
+                const SizedBox(height: 20),
+                _buildStats(),
+                const SizedBox(height: 15),
+                Expanded(child: selectedTaskIndex == null ? _buildMainDashboard() : _buildIndividualView()),
+              ],
+            ),
           ),
-          if (showAnim) _buildEnhancedAnimation(),
+          if (showAnim) _buildRocketOverlay(),
         ],
       ),
-      floatingActionButton: selectedTaskIndex == null ? FloatingActionButton(
+      floatingActionButton: FloatingActionButton(
         backgroundColor: cyan, onPressed: _showAddDialog, mini: true,
-        child: const Icon(Icons.bolt, color: Colors.black, size: 30),
-      ) : null,
+        child: const Icon(Icons.add, color: Colors.black, size: 28),
+      ),
     );
   }
 
-  // --- TASK 2: CAPTAIN'S LOG PENDING FIX ---
-  Widget _buildCaptionRow() => Container(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    decoration: BoxDecoration(
-        border: Border.symmetric(horizontal: BorderSide(color: cyan.withOpacity(0.1), width: 0.5))
-    ),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        // Solid Icon Left
-        Icon(Icons.radio_button_checked, color: cyan.withOpacity(0.5), size: 10),
-        const SizedBox(width: 8),
-        Text("STREAK: ${habits.length} ACTIVE", style: TextStyle(color: cyan.withOpacity(0.5), fontSize: 9, fontWeight: FontWeight.bold)),
-
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text("CAPTAIN'S LOG", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 6, shadows: [Shadow(color: cyan, blurRadius: 12)])),
-        ),
-
-        Text("SYSTEM: ONLINE", style: TextStyle(color: Colors.greenAccent.withOpacity(0.5), fontSize: 9, fontWeight: FontWeight.bold)),
-        const SizedBox(width: 8),
-        // Solid Icon Right
-        Icon(Icons.shield, color: Colors.greenAccent.withOpacity(0.5), size: 10),
-      ],
+  Widget _statBox(String label, String val, Color col, IconData icon) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: col, width: 2),
+          boxShadow: [BoxShadow(color: col.withOpacity(0.3), blurRadius: 10)]
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(label, style: TextStyle(color: col, fontSize: 10, fontWeight: FontWeight.bold)),
+          Icon(icon, color: col, size: 14)
+        ]),
+        const SizedBox(height: 5),
+        FittedBox(child: Text(val, style: TextStyle(color: col, fontSize: 32, fontWeight: FontWeight.w900, shadows: [Shadow(color: col, blurRadius: 10)]))),
+      ]),
     ),
   );
 
   Widget _buildStats() => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 15),
-    child: Row(
-      children: [
-        _statCard("VITALITY CORE", "$hp%", hotPink, Icons.favorite),
-        const SizedBox(width: 12),
-        _statCard("COMMAND RANK", "LVL $level", gold, Icons.workspace_premium),
-      ],
-    ),
+    child: Row(children: [
+      _statBox("VITALITY CORE", "$hp%", brightOrange, Icons.favorite),
+      const SizedBox(width: 12),
+      _statBox("RANK", "LVL $level", gold, Icons.workspace_premium),
+    ]),
   );
 
-  Widget _statCard(String label, String val, Color col, IconData icon) => Expanded(
-    child: Container(
-      padding: const EdgeInsets.all(16),
+  Widget _buildMainDashboard() {
+    double missionWidth = MediaQuery.of(context).size.width * 0.3;
+    if (missionWidth > 120) missionWidth = 120;
+
+    return Container(
+      margin: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [col.withOpacity(0.15), Colors.transparent], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: col.withOpacity(0.3), width: 1.5),
-        boxShadow: [BoxShadow(color: col.withOpacity(0.05), blurRadius: 15, spreadRadius: 2)],
+        color: Colors.black.withOpacity(0.6),
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: cyan.withOpacity(0.4), width: 1.5),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label, style: TextStyle(color: col.withOpacity(0.5), fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 1)),
-              Icon(icon, color: col.withOpacity(0.3), size: 12),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(val, style: TextStyle(color: col, fontSize: 26, fontWeight: FontWeight.w900, shadows: [Shadow(color: col, blurRadius: 10)])),
-        ],
-      ),
-    ),
-  );
-
-  Widget _buildMainDashboard() => Container(
-    margin: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-        color: const Color(0xFF0A0F15), borderRadius: BorderRadius.circular(25),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 20)]
-    ),
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(25),
       child: Row(
         children: [
           Container(
-            width: 115,
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), border: const Border(right: BorderSide(color: Colors.white10))),
+            width: missionWidth,
+            decoration: BoxDecoration(border: Border(right: BorderSide(color: cyan.withOpacity(0.2)))),
             child: Column(
               children: [
-                Container(
-                  height: 50, alignment: Alignment.center,
-                  child: Text("MISSIONS 🧬", style: TextStyle(color: cyan, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.5, shadows: [Shadow(color: cyan, blurRadius: 5)])),
-                ),
+                Container(height: 50, alignment: Alignment.center, child: Text("MISSIONS", style: TextStyle(color: cyan, fontSize: 10, fontWeight: FontWeight.bold))),
                 Expanded(
                   child: ListView.builder(
                     itemCount: habits.length,
-                    itemBuilder: (context, i) => InkWell(
+                    itemBuilder: (context, i) => GestureDetector(
                       onTap: () => setState(() => selectedTaskIndex = i),
+                      onLongPress: () => _confirmDelete(i),
                       child: Container(
-                        height: 70,
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.03)))),
-                        // --- TASK 3: FONT SIZE FOR MANUAL ENTRIES ---
-                        child: Text(
-                            "${taskEmojis[i % taskEmojis.length]} ${habits[i]["name"]}",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.5)
-                        ),
+                        height: 75, alignment: Alignment.center,
+                        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white10))),
+                        child: Text(habits[i]["name"], textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900)),
                       ),
                     ),
                   ),
@@ -219,26 +214,30 @@ class _HabitPageState extends State<HabitPage> {
           ),
           Expanded(
             child: SingleChildScrollView(
+              controller: _dateScrollController,
               scrollDirection: Axis.horizontal,
               child: Column(
                 children: [
                   Container(
-                    height: 50, color: Colors.black45,
-                    child: Row(children: List.generate(31, (i) => Container(width: 55, alignment: Alignment.center, child: Text("${i+1}", style: TextStyle(color: (i+1) == currentDay ? cyan : Colors.white54, fontSize: 14, fontWeight: FontWeight.bold))))),
+                    height: 50,
+                    child: Row(children: List.generate(daysInMonth, (i) => Container(
+                        width: 65, alignment: Alignment.center,
+                        child: Text("${i+1}", style: TextStyle(color: (i+1) == currentDay ? cyan : neonGreen, fontWeight: FontWeight.w900, fontSize: 20))
+                    ))),
                   ),
                   Expanded(
                     child: SingleChildScrollView(
                       child: Column(
                         children: List.generate(habits.length, (hIdx) => Row(
-                          children: List.generate(31, (dIdx) => GestureDetector(
+                          children: List.generate(daysInMonth, (dIdx) => GestureDetector(
                             onTap: () => _handleEntry(hIdx, dIdx),
                             child: Container(
-                                width: 55, height: 70,
+                                width: 65, height: 75,
                                 decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.white.withOpacity(0.01)),
-                                  color: (dIdx + 1) == currentDay ? cyan.withOpacity(0.03) : Colors.transparent,
+                                  border: Border.all(color: Colors.white.withOpacity(0.05)),
+                                  color: (dIdx + 1) == currentDay ? cyan.withOpacity(0.15) : Colors.transparent,
                                 ),
-                                child: _getIcon(habits[hIdx]["data"][dIdx], dIdx + 1)
+                                child: _getGridIcon(habits[hIdx]["data"][dIdx], dIdx + 1)
                             ),
                           )),
                         )),
@@ -251,130 +250,110 @@ class _HabitPageState extends State<HabitPage> {
           ),
         ],
       ),
-    ),
-  );
+    );
+  }
 
-  Widget _buildIndividualDashboard() {
+  Widget _getGridIcon(String status, int day) {
+    if (day > currentDay) return Icon(Icons.lock, color: Colors.white.withOpacity(0.5), size: 18);
+    if (status == "OK") return Icon(Icons.check_circle, color: gold, size: 30, shadows: [Shadow(color: gold, blurRadius: 10)]);
+
+    // TODAY NO RESTRICTION
+    if (day == currentDay) {
+      return Center(child: Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: cyan, boxShadow: [BoxShadow(color: cyan, blurRadius: 10)])));
+    }
+    // PAST RESTRICTION
+    return const Center(child: Text("🚫", style: TextStyle(fontSize: 18)));
+  }
+
+  Widget _buildIndividualView() {
     final task = habits[selectedTaskIndex!];
+    int completed = task["data"].where((e) => e == "OK").length;
+    double progress = completed / daysInMonth;
+
     return Column(
       children: [
         ListTile(
-          leading: IconButton(onPressed: () => setState(() => selectedTaskIndex = null), icon: Icon(Icons.arrow_back_ios_new, color: cyan, size: 20)),
-          title: Text(task["name"], style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 22, letterSpacing: 2)),
-          trailing: Text("🎯 TARGET: 31/31", style: TextStyle(color: cyan.withOpacity(0.5), fontSize: 10, fontWeight: FontWeight.bold)),
+          leading: IconButton(onPressed: () => setState(() => selectedTaskIndex = null), icon: Icon(Icons.arrow_back, color: cyan)),
+          title: Text(task["name"], style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 22)),
+          trailing: IconButton(onPressed: () => _confirmDelete(selectedTaskIndex!), icon: Icon(Icons.delete_sweep, color: brightOrange)),
         ),
-        _buildGraph(task),
-        const SizedBox(height: 20),
         Expanded(
           child: GridView.builder(
-            padding: const EdgeInsets.all(15), gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 7, mainAxisSpacing: 12, crossAxisSpacing: 12),
-            itemCount: 31,
+            padding: const EdgeInsets.all(15),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 7, mainAxisExtent: 80, crossAxisSpacing: 8, mainAxisSpacing: 8),
+            itemCount: daysInMonth,
             itemBuilder: (context, i) => GestureDetector(
               onTap: () => _handleEntry(selectedTaskIndex!, i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                decoration: BoxDecoration(
-                    color: const Color(0xFF0B1218), borderRadius: BorderRadius.circular(15),
-                    border: Border.all(color: (i+1) == currentDay ? cyan : Colors.white.withOpacity(0.05)),
-                    boxShadow: [(i+1) == currentDay ? BoxShadow(color: cyan.withOpacity(0.15), blurRadius: 10) : const BoxShadow(color: Colors.transparent)]
-                ),
-                child: _getIcon(task["data"][i], i + 1),
+              child: Container(
+                decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), borderRadius: BorderRadius.circular(10), border: Border.all(color: (i+1) == currentDay ? cyan : Colors.white10)),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text("${i+1}", style: TextStyle(color: neonGreen, fontWeight: FontWeight.bold)),
+                  _getGridIcon(task["data"][i], i + 1),
+                ]),
               ),
             ),
           ),
         ),
+        _buildPerformanceGraph(progress),
       ],
     );
   }
 
-  Widget _buildGraph(var task) => Container(
-    height: 90, margin: const EdgeInsets.symmetric(horizontal: 20),
-    padding: const EdgeInsets.all(15),
-    decoration: BoxDecoration(color: const Color(0xFF0B1218), borderRadius: BorderRadius.circular(20), border: Border.all(color: cyan.withOpacity(0.1))),
-    child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, crossAxisAlignment: CrossAxisAlignment.end,
-      children: List.generate(7, (i) {
-        int dIdx = (currentDay - 7 + i).clamp(0, 30);
-        bool isOk = task["data"][dIdx] == "OK";
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 600),
-              width: 20, height: isOk ? 45 : 8,
-              decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: isOk ? [cyan, cyan.withOpacity(0.3)] : [Colors.white10, Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter),
-                  borderRadius: BorderRadius.circular(5),
-                  boxShadow: [if(isOk) BoxShadow(color: cyan.withOpacity(0.2), blurRadius: 5)]
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text("${dIdx+1}", style: const TextStyle(color: Colors.white24, fontSize: 8)),
-          ],
-        );
-      }),
-    ),
+  Widget _buildPerformanceGraph(double progress) => Container(
+    padding: const EdgeInsets.all(25),
+    decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), borderRadius: const BorderRadius.vertical(top: Radius.circular(30))),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text("PERFORMANCE", style: TextStyle(color: neonGreen, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2)),
+        Text("${(progress * 100).toInt()}%", style: TextStyle(color: neonGreen, fontWeight: FontWeight.bold)),
+      ]),
+      const SizedBox(height: 12),
+      Stack(children: [
+        Container(height: 8, decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10))),
+        AnimatedContainer(duration: const Duration(seconds: 1), height: 8, width: (MediaQuery.of(context).size.width - 50) * progress, decoration: BoxDecoration(color: neonGreen, borderRadius: BorderRadius.circular(10), boxShadow: [BoxShadow(color: neonGreen, blurRadius: 10)])),
+      ]),
+    ]),
   );
 
-  // --- TASK 1: BONE REPLACED WITH 🚫 ---
-  Widget _getIcon(String status, int day) {
-    if (day > currentDay) return Icon(Icons.lock_clock_outlined, color: gold.withOpacity(0.4), size: 18);
-    if (status == "OK") return Icon(Icons.verified, color: cyan, size: 28, shadows: [Shadow(color: cyan, blurRadius: 15)]);
-    return const Center(child: Text("🚫", style: TextStyle(fontSize: 18)));
-  }
-
-  Widget _buildEnhancedAnimation() => Positioned.fill(
+  Widget _buildRocketOverlay() => Positioned.fill(
     child: Container(
-      color: Colors.black.withOpacity(0.5),
-      child: TweenAnimationBuilder(
-        duration: const Duration(milliseconds: 1800),
-        tween: Tween<double>(begin: 0, end: 1),
-        builder: (context, double val, child) {
-          double rx = -1.5 + (val * 3); double ry = 1.5 - (val * 3);
-          double sx = 0.5 - (val * 1.5); double sy = -1.2 + (val * 2.5);
-
-          return Stack(
-            children: [
-              if (isGain) ...[
-                Align(alignment: Alignment(rx - 0.1, ry + 0.1), child: Icon(Icons.auto_awesome, color: cyan.withOpacity(0.3), size: 50 * val)),
-                Align(alignment: Alignment(rx, ry), child: Transform.rotate(angle: -math.pi / 4, child: Icon(Icons.rocket_launch, color: cyan, size: 90, shadows: [Shadow(color: cyan, blurRadius: 40)]))),
-              ] else ...[
-                Align(alignment: Alignment(sx + 0.1, sy - 0.1), child: Icon(Icons.brightness_3, color: Colors.red.withOpacity(0.2), size: 30)),
-                Align(alignment: Alignment(sx, sy), child: Transform.rotate(angle: val * 4, child: Icon(Icons.star, color: Color.lerp(gold, Colors.red, val), size: 85 * (1 - (val * 0.4)), shadows: [Shadow(color: Colors.orange, blurRadius: 25 * (1 - val))]))),
-              ],
-              Center(
-                child: Opacity(
-                  opacity: (1 - (val - 0.5).abs() * 2).clamp(0, 1),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-                    decoration: BoxDecoration(
-                        gradient: LinearGradient(colors: isGain ? [Colors.black, cyan.withOpacity(0.2)] : [Colors.black, Colors.red.withOpacity(0.2)]),
-                        borderRadius: BorderRadius.circular(40),
-                        border: Border.all(color: isGain ? cyan : hotPink, width: 2.5),
-                        boxShadow: [BoxShadow(color: isGain ? cyan : hotPink, blurRadius: 20)]
-                    ),
-                    child: Text(animMsg, style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+      color: Colors.black.withOpacity(0.9),
+      child: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(isGain ? Icons.rocket_launch : Icons.report_problem, color: isGain ? gold : brightOrange, size: 100, shadows: [Shadow(color: isGain ? gold : brightOrange, blurRadius: 30)]),
+          const SizedBox(height: 20),
+          Text(animMsg, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+        ]),
       ),
     ),
   );
 
   void _showAddDialog() {
     showDialog(context: context, builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF0B1218),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30), side: BorderSide(color: cyan.withOpacity(0.3))),
-      title: Text("DEPLOY MISSION 🚀", style: TextStyle(color: cyan, fontWeight: FontWeight.bold)),
-      content: TextField(controller: _habitController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: "Objective Name...", hintStyle: TextStyle(color: Colors.white10))),
-      actions: [TextButton(onPressed: () {
-        if (_habitController.text.isNotEmpty) {
-          setState(() => habits.add({"name": _habitController.text.toUpperCase(), "data": List.generate(31, (i) => "EMPTY")}));
-          _saveData(); _habitController.clear(); Navigator.pop(context);
-        }
-      }, child: Text("INITIALIZE", style: TextStyle(color: cyan, fontWeight: FontWeight.bold)))],
+        backgroundColor: Colors.black,
+        shape: RoundedRectangleBorder(side: BorderSide(color: cyan), borderRadius: BorderRadius.circular(20)),
+        title: Text("NEW MISSION", style: TextStyle(color: cyan, fontWeight: FontWeight.bold)),
+        content: TextField(controller: _habitController, style: const TextStyle(color: Colors.white)),
+        actions: [TextButton(onPressed: () {
+          if (_habitController.text.isNotEmpty) {
+            setState(() { habits.add({"name": _habitController.text.toUpperCase(), "data": List.generate(daysInMonth, (i) => "EMPTY")}); });
+            _saveData(); _habitController.clear(); Navigator.pop(context);
+          }
+        }, child: Text("START", style: TextStyle(color: cyan)))]
+    ));
+  }
+
+  void _confirmDelete(int index) {
+    showDialog(context: context, builder: (context) => AlertDialog(
+      backgroundColor: Colors.black,
+      title: const Text("DELETE MISSION?", style: TextStyle(color: Colors.red)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("NO", style: TextStyle(color: Colors.white))),
+        TextButton(onPressed: () {
+          setState(() { habits.removeAt(index); selectedTaskIndex = null; });
+          _saveData(); Navigator.pop(context);
+        }, child: const Text("YES", style: TextStyle(color: Colors.red))),
+      ],
     ));
   }
 }
