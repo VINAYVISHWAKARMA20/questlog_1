@@ -122,7 +122,7 @@ class _HabitPageState extends State<HabitPage> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          Positioned.fill(child: Image.asset("assets/setting.jpeg", fit: BoxFit.cover)),
+          Positioned.fill(child: Image.asset("assets/bg.jpeg", fit: BoxFit.cover)),
           SafeArea(
             child: Column(
               children: [
