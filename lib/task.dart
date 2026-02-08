@@ -322,3 +322,4 @@ class _TaskPageState extends State<TaskPage> {
 
   Widget _input(TextEditingController c, String h) => TextField(controller: c, style: const TextStyle(color: Colors.white), decoration: InputDecoration(hintText: h, hintStyle: const TextStyle(color: Colors.white24)));
 }
+
